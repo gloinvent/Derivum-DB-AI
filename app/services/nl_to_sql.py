@@ -44,7 +44,7 @@ def nl_to_sql(question: str) -> tuple[str, float]:
     try:
         response = _get_client().chat.completions.create(
             model=settings.llm_model,
-            messages=messages,
+            messages=messages, # type: ignore
             temperature=0,
         )
     except Exception:
@@ -53,7 +53,7 @@ def nl_to_sql(question: str) -> tuple[str, float]:
 
     elapsed = time.perf_counter() - t0
     usage = response.usage
-    raw = response.choices[0].message.content.strip()
+    raw = response.choices[0].message.content.strip() # type: ignore
 
     if usage:
         ptd = usage.prompt_tokens_details
