@@ -3,6 +3,7 @@ import time
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
@@ -14,7 +15,44 @@ from app.api.routes.v1_query import router as v1_query_router
 setup_logging()
 log = get_logger(__name__)
 
-app = FastAPI(title="fetcherio", docs_url=None, redoc_url=None)
+app = FastAPI(
+    title="Fetcher.io API",
+    version="1.0.0",
+    description=(
+        "Natural language → SQL for the **Derivium** Indian fixed-income / bond database.\n\n"
+        "Submit a plain-English question and receive a validated read-only PostgreSQL SELECT query.\n\n"
+        "**Auth**: pass `Authorization: Bearer <V1_API_KEY>` on every request. "
+        "Omit the header in dev mode (when `V1_API_KEY` is not set in `.env`)."
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": (
+                "Value of `V1_API_KEY` from your `.env` file. "
+                "Example: `Authorization: Bearer my-secret-key`"
+            ),
+        }
+    }
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 
 @app.middleware("http")

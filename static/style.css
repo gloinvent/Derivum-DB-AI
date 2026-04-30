@@ -279,10 +279,13 @@ body { font-family: var(--sans); font-size: 13.5px; color: var(--text); line-hei
 }
 
 .results-bar {
-  padding: 11px 24px;
+  padding: 8px 16px 8px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .row-count-label {
   font-family: var(--mono);
@@ -320,6 +323,53 @@ thead th {
   user-select: none;
 }
 thead th:first-child { padding-left: 24px; }
+
+/* Sortable column headers */
+thead th.sortable {
+  cursor: pointer;
+  transition: color .15s;
+}
+thead th.sortable:hover { color: var(--text); }
+thead th.sortable.sorted { color: var(--accent); }
+
+.th-label { margin-right: 4px; }
+
+.sort-icon {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: .8;
+  display: inline-block;
+  width: 10px;
+}
+
+/* Filter row */
+thead tr.filter-row th {
+  top: 37px; /* height of the label row (11px 18px padding × 2 + font) */
+  padding: 5px 10px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+}
+thead tr.filter-row th:first-child { padding-left: 16px; }
+
+.col-filter {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-s);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 3px 7px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.col-filter::placeholder { color: var(--text-dim); }
+.col-filter:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
 
 tbody tr {
   border-bottom: 1px solid var(--border);

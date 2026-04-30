@@ -688,4 +688,6 @@ JOIN "PDB_redemption" r ON e.isin_id = r.isin_id
 WHERE io.issuer_alias ILIKE '%PFC%'
 AND (r.redemption_date - p.payin_date) / 365.0 > 5
 AND p.payin_date >= CURRENT_DATE - INTERVAL '6 MONTH';
+
+NOTE : by default fetch only 10 rows, if the natural language query explecitly mentions the number of rows to be fetched use that number, 
 """

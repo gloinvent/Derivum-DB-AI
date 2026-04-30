@@ -1,6 +1,7 @@
 import time
 import threading
 from collections import defaultdict
+from typing import Literal
 
 from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
@@ -32,6 +33,45 @@ class V1QueryRequest(BaseModel):
     query: str
     user_type: str | None = None
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "query": "Show all PSU AAA bonds maturing in the next 2 years",
+                "user_type": "pro",
+            }
+        }
+    }
+
+
+class V1SuccessResponse(BaseModel):
+    status: Literal["success"]
+    sql: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "success",
+                "sql": 'SELECT i.isin, e.issuer_name, r.redemption_date FROM "PDB_ebp_records" e JOIN "PDB_isin_records" i ON e.isin_id = i.id JOIN "PDB_redemption" r ON e.isin_id = r.isin_id JOIN "PDB_issuer_organization" io ON e.issuer_name = io.issuer_name WHERE io.issuer_industry = \'PSU\' AND r.redemption_date <= CURRENT_DATE + INTERVAL \'2 YEAR\';',
+            }
+        }
+    }
+
+
+class V1ErrorResponse(BaseModel):
+    status: Literal["error"]
+    code: str
+    message: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "error",
+                "code": "UNAUTHORIZED",
+                "message": "API key absent or malformed.",
+            }
+        }
+    }
+
 
 def _error(status: int, code: str, message: str, headers: dict | None = None) -> JSONResponse:
     log.warning("v1/query | error | status=%d | code=%s | message=%s", status, code, message)
@@ -61,7 +101,57 @@ def _check_rate_limit(key: str) -> JSONResponse | None:
     return None
 
 
-@router.post("/v1/query")
+@router.post(
+    "/v1/query",
+    summary="Natural language → SQL",
+    description=(
+        "Convert a plain-English question about the bond database into a validated "
+        "read-only PostgreSQL SELECT query.\n\n"
+        "**Auth**: `Authorization: Bearer <V1_API_KEY>`. "
+        "Omit entirely when `V1_API_KEY` is not set in `.env` (dev mode).\n\n"
+        "**Plan tiers** (`user_type` field): `free` ⊂ `basic` ⊂ `pro` ⊂ `enterprise`. "
+        "Omit `user_type` to skip the tier check."
+    ),
+    tags=["v1"],
+    response_model=V1SuccessResponse,
+    responses={
+        400: {
+            "model": V1ErrorResponse,
+            "description": "Malformed JSON or missing required field.",
+        },
+        401: {
+            "model": V1ErrorResponse,
+            "description": "API key absent, malformed, or revoked.",
+        },
+        403: {
+            "model": V1ErrorResponse,
+            "description": "user_type exceeds the plan tier bound to the API key.",
+        },
+        422: {
+            "model": V1ErrorResponse,
+            "description": "fetcher.io could not produce valid SQL from the input. Rephrase the query.",
+        },
+        429: {
+            "model": V1ErrorResponse,
+            "description": "Request volume exceeds the plan's allowed rate.",
+            "headers": {
+                "X-RateLimit-Limit": {
+                    "description": "Maximum requests allowed per window.",
+                    "schema": {"type": "integer", "example": 20},
+                },
+                "X-RateLimit-Reset": {
+                    "description": "Window duration in seconds.",
+                    "schema": {"type": "integer", "example": 60},
+                },
+            },
+        },
+        500: {
+            "model": V1ErrorResponse,
+            "description": "Unhandled server-side failure. Retry with exponential backoff.",
+        },
+    },
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
 async def v1_run_query(
     req: V1QueryRequest,
     authorization: str | None = Header(default=None),

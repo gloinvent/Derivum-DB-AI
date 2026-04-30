@@ -4,7 +4,6 @@
 const questionEl      = document.getElementById('question');
 const runBtn          = document.getElementById('runBtn');
 const copyBtn         = document.getElementById('copyBtn');
-
 const sqlSection      = document.getElementById('sqlSection');
 const sqlDisplay      = document.getElementById('sqlDisplay');
 const metaSection     = document.getElementById('metaSection');
@@ -22,7 +21,12 @@ const tableHead       = document.getElementById('tableHead');
 const tableBody       = document.getElementById('tableBody');
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let rawSQL = '';
+let rawSQL      = '';
+let lastCols    = [];
+let lastRows    = [];
+let sortCol     = null;
+let sortDir     = 'asc';   // 'asc' | 'desc'
+let filters     = {};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,50 +164,144 @@ function handleResult(data) {
   renderTable(data.columns, data.rows, data.row_count);
 }
 
-function renderTable(cols, rows, count) {
-  // Detect numeric columns (check first row)
-  const isNum = {};
-  cols.forEach(c => {
-    isNum[c] = isNumericVal(rows[0][c]);
+// ── Sort / filter helpers ─────────────────────────────────────────────────────
+
+function getSortedFiltered() {
+  // Filter
+  const active = Object.entries(filters).filter(([, v]) => v.trim());
+  let rows = active.length
+    ? lastRows.filter(row => active.every(([col, term]) => {
+        const v = row[col];
+        if (v === null || v === undefined) return false;
+        return String(v).toLowerCase().includes(term.toLowerCase());
+      }))
+    : lastRows;
+
+  // Sort
+  if (sortCol) {
+    rows = [...rows].sort((a, b) => {
+      const av = a[sortCol], bv = b[sortCol];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      const an = Number(av), bn = Number(bv);
+      if (!isNaN(an) && !isNaN(bn)) return sortDir === 'asc' ? an - bn : bn - an;
+      const as = String(av).toLowerCase(), bs = String(bv).toLowerCase();
+      return sortDir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as);
+    });
+  }
+  return rows;
+}
+
+function toggleSort(col) {
+  if (sortCol === col) {
+    if (sortDir === 'asc') { sortDir = 'desc'; }
+    else { sortCol = null; sortDir = 'asc'; }
+  } else {
+    sortCol = col;
+    sortDir = 'asc';
+  }
+  updateSortIndicators();
+  applyTable();
+}
+
+function updateSortIndicators() {
+  tableHead.querySelectorAll('th.sortable').forEach(th => {
+    const col = th.dataset.col;
+    const icon = th.querySelector('.sort-icon');
+    if (col === sortCol) {
+      icon.textContent = sortDir === 'asc' ? '↑' : '↓';
+      th.classList.add('sorted');
+    } else {
+      icon.textContent = '';
+      th.classList.remove('sorted');
+    }
+  });
+}
+
+function buildTableHeaders(cols) {
+  // Row 1 — sortable column labels
+  const labelRow = document.createElement('tr');
+  cols.forEach(col => {
+    const th = document.createElement('th');
+    th.className = 'sortable';
+    th.dataset.col = col;
+    th.innerHTML = `<span class="th-label" title="${esc(col)}">${esc(col)}</span><span class="sort-icon"></span>`;
+    th.addEventListener('click', () => toggleSort(col));
+    labelRow.appendChild(th);
   });
 
-  // Header
-  tableHead.innerHTML =
-    '<tr>' + cols.map(c =>
-      `<th title="${esc(c)}">${esc(c)}</th>`
-    ).join('') + '</tr>';
+  // Row 2 — filter inputs
+  const filterRow = document.createElement('tr');
+  filterRow.className = 'filter-row';
+  cols.forEach(col => {
+    const th = document.createElement('th');
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'col-filter';
+    inp.placeholder = '…';
+    inp.addEventListener('input', e => {
+      filters[col] = e.target.value;
+      applyTable();
+    });
+    th.appendChild(inp);
+    filterRow.appendChild(th);
+  });
 
-  // Body
+  tableHead.innerHTML = '';
+  tableHead.appendChild(labelRow);
+  tableHead.appendChild(filterRow);
+}
+
+// Detect numeric columns once per dataset (based on first non-null value)
+function buildIsNum(cols, rows) {
+  const isNum = {};
+  cols.forEach(c => {
+    const sample = rows.find(r => r[c] !== null && r[c] !== undefined);
+    isNum[c] = sample ? isNumericVal(sample[c]) : false;
+  });
+  return isNum;
+}
+
+function applyTable() {
+  const rows  = getSortedFiltered();
+  const isNum = buildIsNum(lastCols, lastRows);
+
   tableBody.innerHTML = rows.map(row =>
-    '<tr>' + cols.map(c => {
+    '<tr>' + lastCols.map(c => {
       const raw = row[c];
-
-      if (raw === null || raw === undefined) {
+      if (raw === null || raw === undefined)
         return '<td class="td-null" title="NULL">null</td>';
-      }
-
-      if (typeof raw === 'boolean' || raw === true || raw === false) {
+      if (typeof raw === 'boolean') {
         const label = raw ? 'true' : 'false';
         return `<td class="td-bool"><span class="bool-${label}">${label}</span></td>`;
       }
-
       if (typeof raw === 'object') {
         const s = JSON.stringify(raw);
         return `<td title="${esc(s)}">${esc(s)}</td>`;
       }
-
       const s = String(raw);
-      if (isNum[c]) {
-        return `<td class="td-num" title="${esc(s)}">${esc(s)}</td>`;
-      }
-
+      if (isNum[c]) return `<td class="td-num" title="${esc(s)}">${esc(s)}</td>`;
       return `<td title="${esc(s)}">${esc(s)}</td>`;
     }).join('') + '</tr>'
   ).join('');
 
-  rowCountLabel.textContent =
-    `${count.toLocaleString()} row${count !== 1 ? 's' : ''} returned`;
+  const total = lastRows.length, shown = rows.length;
+  rowCountLabel.textContent = shown < total
+    ? `${shown.toLocaleString()} of ${total.toLocaleString()} rows`
+    : `${total.toLocaleString()} row${total !== 1 ? 's' : ''} returned`;
+}
 
+// ── Render (called once per new query result) ─────────────────────────────────
+
+function renderTable(cols, rows, count) {
+  lastCols = cols;
+  lastRows = rows;
+  sortCol  = null;
+  sortDir  = 'asc';
+  filters  = {};
+
+  buildTableHeaders(cols);
+  applyTable();
   showPanel(resultsState);
 }
 

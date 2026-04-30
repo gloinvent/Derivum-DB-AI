@@ -13,7 +13,7 @@ class QueryRequest(BaseModel):
     question: str
 
 
-@router.post("/query")
+@router.post("/query", include_in_schema=False)
 async def run_query(req: QueryRequest):
     log.info("query | question=%r", req.question)
 
