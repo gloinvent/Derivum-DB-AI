@@ -6,7 +6,6 @@ from openai import OpenAI
 
 from app.config import settings
 from app.context.db_schema import full_db_context_helper
-from app.context.date import get_date_context
 from app.logger import get_logger
 
 log = get_logger(__name__)
@@ -26,12 +25,12 @@ def nl_to_sql(question: str) -> tuple[str, float]:
     Returns (sql, elapsed_seconds).
 
     System message is fully static (only full_db_context_helper) so OpenAI
-    caches it after the first call. Date context goes in the user message to
-    keep the cacheable prefix unchanged across requests.
+    caches it after the first call. Date arithmetic uses PostgreSQL's built-in
+    CURRENT_DATE / CURRENT_TIMESTAMP rather than injecting a date string.
     """
     messages = [
         {"role": "system", "content": full_db_context_helper},
-        {"role": "user", "content": f"{get_date_context()}\n\n{question}"},
+        {"role": "user", "content": question},
     ]
 
     log.info("LLM request | model=%s | question=%r", settings.llm_model, question)

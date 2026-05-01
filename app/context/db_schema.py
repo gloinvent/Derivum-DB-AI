@@ -644,7 +644,7 @@ HAVING SUM(t.traded_value_rs) > 0
 ORDER BY aggregate_volume DESC
 LIMIT 10;
 
-Q: Cashflow matrix for an ISIN
+Q: Cashflow matrix for an ISIN INE949L08434
 SELECT
 i.isin,
 e.issuer_name,
@@ -689,5 +689,7 @@ WHERE io.issuer_alias ILIKE '%PFC%'
 AND (r.redemption_date - p.payin_date) / 365.0 > 5
 AND p.payin_date >= CURRENT_DATE - INTERVAL '6 MONTH';
 
-NOTE : by default fetch only 10 rows, if the natural language query explecitly mentions the number of rows to be fetched use that number, 
+ MUST FOLLOW RULES :
+    - dont use joins unnecessary, use only and only when requried 
+    - by default fetch only 10 rows, if the natural language query explecitly mentions the number of rows to be fetched use that number, 
 """

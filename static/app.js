@@ -306,13 +306,41 @@ function renderTable(cols, rows, count) {
 }
 
 // ── Copy SQL ──────────────────────────────────────────────────────────────────
+const _copyIcon = copyBtn.innerHTML;
+const _checkIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function _flashCopyBtn(ok) {
+  copyBtn.innerHTML = ok ? _checkIcon : '✕';
+  copyBtn.style.color = ok ? 'var(--accent, #4ade80)' : '#f87171';
+  setTimeout(() => { copyBtn.innerHTML = _copyIcon; copyBtn.style.color = ''; }, 1600);
+}
+
 copyBtn.addEventListener('click', () => {
   if (!rawSQL) return;
-  navigator.clipboard.writeText(rawSQL).then(() => {
-    copyBtn.setAttribute('title', 'Copied!');
-    setTimeout(() => copyBtn.setAttribute('title', 'Copy SQL'), 1600);
-  });
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(rawSQL)
+      .then(() => _flashCopyBtn(true))
+      .catch(() => {
+        // clipboard API denied — fall back to execCommand
+        const ok = _execCommandCopy(rawSQL);
+        _flashCopyBtn(ok);
+      });
+  } else {
+    const ok = _execCommandCopy(rawSQL);
+    _flashCopyBtn(ok);
+  }
 });
+
+function _execCommandCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  return ok;
+}
 
 // ── Event listeners ───────────────────────────────────────────────────────────
 runBtn.addEventListener('click', runQuery);
