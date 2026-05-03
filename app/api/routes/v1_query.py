@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.logger import get_logger
 from app.services.nl_to_sql import nl_to_sql
-from app.services.query_executor import validate_read_only
+from app.services.sql_validator import validate_read_only
 
 router = APIRouter()
 log = get_logger(__name__)

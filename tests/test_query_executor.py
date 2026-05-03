@@ -5,7 +5,8 @@ All psycopg2 calls are mocked — no live DB needed.
 import pytest
 from unittest.mock import MagicMock, patch
 
-from app.services.query_executor import validate_read_only, execute_query
+from app.services.sql_validator import validate_read_only
+from app.services.query_executor import execute_query
 
 
 def _make_cursor(rows: list[dict]):
@@ -55,7 +56,10 @@ class TestValidateReadOnly:
         with pytest.raises(ValueError):
             validate_read_only('DROP TABLE public."PDB_isin_records";')
 
-    def test_non_select_start_blocked(self):
+    def test_with_cte_passes(self):
+        validate_read_only('WITH ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t) SELECT * FROM ranked LIMIT 10;')
+
+    def test_cte_containing_write_op_blocked(self):
         with pytest.raises(ValueError):
             validate_read_only('WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x;')
 
