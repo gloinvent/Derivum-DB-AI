@@ -22,7 +22,7 @@
           <polygon points="12,2 22,7 22,17 12,22 2,17 2,7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           <polygon points="12,7 17,9.5 17,14.5 12,17 7,14.5 7,9.5" fill="currentColor" opacity="0.35"/>
         </svg>
-        <span class="brand-name">Fetcher.io Database AI</span>
+        <span class="brand-name">Derivium Database AI</span>
       </div>
 
       <div class="query-section">
@@ -34,6 +34,17 @@
           rows="5"
           spellcheck="false"
         ></textarea>
+        <div class="row-limit-row">
+          <label class="field-label" for="rowLimit">Row limit</label>
+          <input
+            type="number"
+            id="rowLimit"
+            class="input-row-limit"
+            placeholder="10"
+            min="1"
+            max="10000"
+          />
+        </div>
         <button id="runBtn" class="btn-run">
           <span class="btn-text">Run Query</span>
           <kbd class="btn-kbd">Ctrl ↵</kbd>

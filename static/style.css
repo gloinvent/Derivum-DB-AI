@@ -113,6 +113,34 @@ body { font-family: var(--sans); font-size: 13.5px; color: var(--text); line-hei
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
+/* Row limit input */
+.row-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.input-row-limit {
+  width: 72px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-s);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 9px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  -moz-appearance: textfield;
+}
+.input-row-limit::placeholder { color: var(--text-dim); }
+.input-row-limit:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.input-row-limit::-webkit-inner-spin-button,
+.input-row-limit::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
 .btn-run {
   display: flex;
   align-items: center;

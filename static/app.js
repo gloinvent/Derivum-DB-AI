@@ -2,6 +2,7 @@
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const questionEl      = document.getElementById('question');
+const rowLimitEl      = document.getElementById('rowLimit');
 const runBtn          = document.getElementById('runBtn');
 const copyBtn         = document.getElementById('copyBtn');
 const sqlSection      = document.getElementById('sqlSection');
@@ -89,10 +90,16 @@ async function runQuery() {
   }, 2500);
 
   try {
+    const rowLimitRaw = rowLimitEl.value.trim();
+    const rowLimit = rowLimitRaw !== '' ? parseInt(rowLimitRaw, 10) : null;
+    const questionWithLimit = rowLimit !== null && rowLimit > 0
+      ? `${question}\nReturn at most ${rowLimit} rows.`
+      : question;
+
     const resp = await fetch('/api/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question: questionWithLimit }),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
