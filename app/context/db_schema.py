@@ -20,7 +20,7 @@ Two logical databases:
 
 **Join philosophy (CRITICAL — follow Praful's pattern):**
 - Primary join path: `ir.issuer_organization_id = io.id` (ID-based, never text-match on issuer_name).
-- EBP join: `e.isin_id = ir.id` — use only when you need EBP-specific columns (yield_ebp, spread_bps, total_issue_size, bidding_date, allotment columns). Do NOT join PDB_ebp_records for ISIN-level attributes that exist on PDB_isin_records (face_value, coupon_fixed, seniority, etc.).
+- EBP join: `e.isin_id = ir.id` — use only when you need EBP-specific columns (yield_ebp, spread_bps, total_issue_size, bidding_date, allotment columns, type_of_issuance). Do NOT join PDB_ebp_records for ISIN-level attributes that exist on PDB_isin_records (face_value, coupon_fixed, seniority, etc.).
 - Trade join: `t.isin_record_id = ir.id` for SDB_trade.
 - 15-day avg join: `f.isin = ir.isin` (text match on ISIN code) for SDB_fifteen_days_trade_avg.
 - All child tables (PDB_redemption, PDB_payin, PDB_tag, PDB_current_rating_agency, PDB_cashflow_record, PDB_isin_security, PDB_investor, PDB_im_records, PDB_call_option_dates, PDB_put_option_dates): join via `child.isin_id = ir.id` (except PDB_cashflow_record/PDB_cashflow_summary which use `isin_record_id`).
@@ -46,7 +46,7 @@ did (varchar) — document/deal ID
 name_of_the_instrument (varchar) — bond name
 issuer_organization_id (bigint, FK → io.id)
 seniority (varchar) — 'Senior','Subordinate','Perpetual','Mezzanine','Subordinate Tier II','Subordinate Tier I','GOI Serviced' (NOTE: GOI serviced is stored in seniority)
-secured_or_unsecured (varchar) — 'Secured','Unsecured' (NOTE: also check seniority for unsecured)
+secured_or_unsecured (varchar) — 'Secured','Unsecured' (THIS is the correct field for secured/unsecured filtering — NOT seniority)
 coupon_fixed (numeric) — fixed rate %. Zero coupon = 0.0000
 coupon_floating (text) — non-null/non-empty = floating rate bond
 current_coupon (varchar) — running coupon rate %
@@ -62,7 +62,7 @@ is_same_call_put (boolean)
 step_up_rate_bps (integer), step_up_condition (text), step_up_date (date)
 step_down_rate_bps (integer), step_down_condition (text), step_down_date (date)
 rated_or_unrated (varchar) — 'Rated','Unrated'
-taxable_or_taxfree (boolean) — false = tax-free, true = taxable
+taxable_or_taxfree (boolean) — true = tax-free, false = taxable
 listed_or_unlisted (varchar) — 'Listed','Unlisted'
 listing_exchange (varchar) — 'NSE','BSE','NSE & BSE'
 record_date (integer) — days before IP date
@@ -79,7 +79,7 @@ other_covenants (text)
 ```
 
 ### PDB_ebp_records (alias: e)
-Use ONLY for EBP-specific data (issuance yield, spread, bidding, allotment details).
+Use ONLY for EBP-specific data (issuance yield, spread, bidding, allotment details, reissuance).
 ```
 id (bigint, PK)
 isin_id (bigint, FK → ir.id)
@@ -93,6 +93,7 @@ listing_exchange (varchar)
 tenor_nse_months (integer)
 allotted_amt (numeric), Cover_Ratio (numeric)
 cut_off_yield (numeric), weighted_avg_cutoff_yield (numeric)
+type_of_issuance (varchar) — 'FRESH ISSUANCE','RE-ISSUANCE' — use for reissuance queries
 ```
 
 ### PDB_redemption (alias: r)
@@ -124,12 +125,14 @@ isin_id (bigint, FK → ir.id)
 
 ### PDB_current_rating_agency (alias: cra)
 One ISIN can have multiple ratings from different agencies. Source is NSDL.
+**CRITICAL:** Direct JOIN on this table causes duplicate ISIN rows (one per rating agency). Use EXISTS for filtering, or DISTINCT ON for selecting the latest rating.
 ```
 id (bigint, PK)
 rating_agency (varchar) — CRISIL, ICRA, CARE, India Ratings, Acuité, Brickwork
 rating (varchar) — 'AAA','AA+','AA','A1+', etc. Also 'AAA (SO)','AAA (CE)' for structured obligations
 outlook (varchar) — 'Stable','Positive','Negative'
 isin_id (bigint, FK → ir.id)
+created_at (timestamp) — use for ordering when selecting latest rating via DISTINCT ON
 ```
 
 ### PDB_cashflow_record (alias: c)
@@ -143,7 +146,8 @@ isin_record_id (bigint, FK → ir.id) — NOTE: isin_record_id, not isin_id
 ### PDB_isin_security (alias: sec)
 ```
 id (bigint, PK)
-guarantee (varchar), guarantor (varchar), percentage_of_guarantee (integer)
+guarantee (varchar) — 'Guaranteed','Not Guaranteed' etc. Filter guaranteed bonds with sec.guarantee = 'Guaranteed' (NOT just IS NOT NULL)
+guarantor (varchar), percentage_of_guarantee (integer)
 credit_enhancement (varchar), security_cover (integer), nature_of_security (text)
 isin_id (bigint, FK → ir.id)
 ```
@@ -500,13 +504,14 @@ JOIN public."PDB_isin_records" ir
     ON t.isin_record_id = ir.id
 JOIN public."PDB_issuer_organization" io
     ON ir.issuer_organization_id = io.id
-JOIN public."PDB_current_rating_agency" cra
-    ON cra.isin_id = ir.id
 LEFT JOIN latest_redemption lr
     ON lr.isin_id = ir.id
 WHERE ir.suspended = false
   AND {issuer_filter}
-  AND cra.rating IN ('AAA','AAA (SO)','AAA (CE)')
+  AND EXISTS (
+      SELECT 1 FROM public."PDB_current_rating_agency" cra
+      WHERE cra.isin_id = ir.id AND cra.rating IN ('AAA','AAA (SO)','AAA (CE)')
+  )
   AND t.trade_date BETWEEN DATE '{start_date}' AND DATE '{end_date}'
   AND (
         (
@@ -534,7 +539,7 @@ JOIN public."PDB_issuer_organization" io
     ON ir.issuer_organization_id = io.id
 WHERE ir.suspended = false
   AND {issuer_filter}
-  AND ir.taxable_or_taxfree = false
+  AND ir.taxable_or_taxfree = true
   AND t.trade_date BETWEEN DATE '{start_date}' AND DATE '{end_date}'
 ORDER BY t.trade_date DESC
 ```
@@ -568,7 +573,7 @@ When user asks for yields by tenor bucket (e.g., "3Y, 5Y, 10Y"), use this patter
 - Standard tenor buckets use ±0.5Y ranges: 3Y = 2.51–3.50, 5Y = 4.51–5.50, 10Y = 8.51–10.50
 - Volume in Crores: `(t.traded_value_rs / 1.0e7)` — filter `>= 5` to exclude small/retail trades.
 - VWAP yield: `SUM(yield * volume_cr) / SUM(volume_cr)` — weighted by trade value.
-- Tax-free filter: `ir.taxable_or_taxfree = false`
+- Tax-free filter: `ir.taxable_or_taxfree = true`
 - Yield sanity: `t.last_traded_yield_percent BETWEEN 0 AND 100`
 
 **Standard tenor bucket labels:**
@@ -600,11 +605,13 @@ trades AS (
     FROM public."SDB_trade" t
     JOIN public."PDB_isin_records" ir ON ir.id = t.isin_record_id
     JOIN public."PDB_issuer_organization" io ON io.id = ir.issuer_organization_id
-    JOIN public."PDB_current_rating_agency" ra ON ra.isin_id = ir.id
     LEFT JOIN next_call_date ncd ON ncd.isin_id = ir.id
     WHERE io.ownership = 'PSU'
-    AND ra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
-    AND ir.taxable_or_taxfree = false
+    AND EXISTS (
+        SELECT 1 FROM public."PDB_current_rating_agency" cra
+        WHERE cra.isin_id = ir.id AND cra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
+    )
+    AND ir.taxable_or_taxfree = true
     AND t.last_traded_yield_percent BETWEEN 0 AND 100
     AND (t.traded_value_rs / 1.0e7) >= 5
     AND t.trade_date BETWEEN DATE '{start_date}' AND DATE '{end_date}'
@@ -659,7 +666,7 @@ trades AS (
     JOIN public."PDB_issuer_organization" io ON io.id = ir.issuer_organization_id
     LEFT JOIN next_call_date ncd ON ncd.isin_id = ir.id
     WHERE io.issuer_alias IN ('PFCLTD', 'NABARD')
-    AND ir.taxable_or_taxfree = false
+    AND ir.taxable_or_taxfree = true
     AND t.last_traded_yield_percent BETWEEN 0 AND 100
     AND (t.traded_value_rs / 1.0e7) >= 5
     AND t.trade_date BETWEEN DATE '{start_date}' AND DATE '{end_date}'
@@ -731,11 +738,13 @@ trades AS (
     FROM public."SDB_trade" t
     JOIN public."PDB_isin_records" ir ON ir.id = t.isin_record_id
     JOIN public."PDB_issuer_organization" io ON io.id = ir.issuer_organization_id
-    JOIN public."PDB_current_rating_agency" ra ON ra.isin_id = ir.id
     LEFT JOIN next_call_date ncd ON ncd.isin_id = ir.id
     WHERE io.issuer_industry IN ('NBFC', 'HFC', 'Banks', 'Bank', 'Insurance')
-    AND ra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
-    AND ir.taxable_or_taxfree = false
+    AND EXISTS (
+        SELECT 1 FROM public."PDB_current_rating_agency" cra
+        WHERE cra.isin_id = ir.id AND cra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
+    )
+    AND ir.taxable_or_taxfree = true
     AND t.last_traded_yield_percent BETWEEN 0 AND 100
     AND (t.traded_value_rs / 1.0e7) >= 5
     AND t.trade_date BETWEEN DATE '{start_date}' AND DATE '{end_date}'
@@ -799,7 +808,7 @@ ORDER BY v.category, v.trade_date, v.tenor
 - Join PDB_securities via `"addedOn"::date = trade_date` AND `tenure` mapped from tenor label.
 - LEFT JOIN gsec — not all dates may have G-Sec data.
 - When user asks for "spread vs GSEC" or "spread over benchmark", always include PDB_securities join.
-- `"addedOn"` must be double-quoted (camelCase column).
+- `"addedOn"` must be double-quoted (camelCase).
 
 ### 3O. Top N most active issuers by volume ("Build your index" — leaderboard)
 
@@ -823,11 +832,13 @@ trades AS (
     FROM public."SDB_trade" t
     JOIN public."PDB_isin_records" ir ON ir.id = t.isin_record_id
     JOIN public."PDB_issuer_organization" io ON io.id = ir.issuer_organization_id
-    JOIN public."PDB_current_rating_agency" ra ON ra.isin_id = ir.id
     LEFT JOIN next_call_date ncd ON ncd.isin_id = ir.id
     WHERE io.ownership = 'PSU'
-    AND ra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
-    AND ir.taxable_or_taxfree = false
+    AND EXISTS (
+        SELECT 1 FROM public."PDB_current_rating_agency" cra
+        WHERE cra.isin_id = ir.id AND cra.rating IN ('AAA', 'AAA (CE)', 'AAA (SO)')
+    )
+    AND ir.taxable_or_taxfree = true
     AND t.last_traded_yield_percent BETWEEN 0 AND 100
     AND (t.traded_value_rs / 1.0e7) >= 5
     AND t.trade_date BETWEEN DATE '{start_date}' AND CURRENT_DATE
@@ -919,6 +930,97 @@ ORDER BY f.avg_daily_vol DESC
 - When user asks for "comparable issuance yields", join PDB_ebp_records and use `e.yield_ebp`.
 - When user asks for "comparable spreads", use `e.spread_bps` for issuance spreads, or compute spread vs G-Sec using PDB_securities for secondary market spreads.
 
+### 3Q. Rating de-duplication — use EXISTS or DISTINCT ON (CRITICAL)
+
+**PROBLEM:** PDB_current_rating_agency contains multiple rows per ISIN (one per rating agency: CRISIL, ICRA, CARE, etc.). Direct JOINs cause duplicate ISIN rows in output.
+
+**Option 1 — EXISTS (preferred for filtering only, no duplicates):**
+Use when you only need to FILTER by rating, not display the rating value:
+```sql
+WHERE EXISTS (
+    SELECT 1 FROM public."PDB_current_rating_agency" cra
+    WHERE cra.isin_id = ir.id
+      AND cra.rating IN ('AAA', 'AAA (SO)', 'AAA (CE)')
+)
+```
+
+**Option 2 — DISTINCT ON (when you need to display the rating):**
+Use when you need to SELECT the rating value in output — picks the latest rating per ISIN:
+```sql
+WITH latest_rating AS (
+    SELECT DISTINCT ON (cra.isin_id)
+        cra.isin_id,
+        cra.rating
+    FROM public."PDB_current_rating_agency" cra
+    WHERE cra.rating IN ('AAA', 'AAA (SO)', 'AAA (CE)')
+    ORDER BY cra.isin_id, cra.created_at DESC NULLS LAST
+)
+SELECT ir.isin, io.issuer_name, lr.rating
+FROM public."PDB_isin_records" ir
+JOIN public."PDB_issuer_organization" io ON ir.issuer_organization_id = io.id
+JOIN latest_rating lr ON lr.isin_id = ir.id
+WHERE ir.suspended = false
+```
+
+**Rules:**
+- DEFAULT to EXISTS for rating filters — it prevents duplicates and is simpler.
+- Use DISTINCT ON CTE only when the rating value must appear in SELECT output.
+- NEVER do a bare `JOIN public."PDB_current_rating_agency" cra ON cra.isin_id = ir.id` without EXISTS or DISTINCT ON — this WILL produce duplicate rows.
+- Order DISTINCT ON by `cra.created_at DESC NULLS LAST` to pick the most recent rating.
+
+### 3R. Reissuance queries — use PDB_ebp_records with type_of_issuance
+
+When user asks for reissued bonds, bonds reissued multiple times, or fresh issuances:
+
+```sql
+SELECT
+    ir.isin,
+    io.issuer_name,
+    COUNT(*) AS reissuance_count
+FROM public."PDB_ebp_records" er
+JOIN public."PDB_isin_records" ir
+    ON er.isin_id = ir.id
+JOIN public."PDB_issuer_organization" io
+    ON ir.issuer_organization_id = io.id
+WHERE ir.suspended = false
+  AND {issuer_filter}
+  AND er.type_of_issuance = 'RE-ISSUANCE'
+  AND er.bidding_date >= CURRENT_DATE - INTERVAL '{period}'
+GROUP BY ir.id, ir.isin, io.issuer_name
+HAVING COUNT(*) > 1
+ORDER BY reissuance_count DESC
+```
+
+**Rules:**
+- `type_of_issuance = 'RE-ISSUANCE'` for reissued bonds.
+- `type_of_issuance = 'FRESH ISSUANCE'` for new/fresh issuances.
+- Use `bidding_date` for date filtering on issuances.
+- Use HAVING COUNT(*) > 1 when user asks for "reissued more than once".
+- GROUP BY `ir.id` to properly count per ISIN.
+
+### 3S. G-Sec yield queries — return all tenures by default
+
+When user asks for G-Sec data on a specific date, return ALL available tenures unless user specifies specific tenors:
+
+```sql
+SELECT
+    "addedOn"::date AS gsec_date,
+    tenure,
+    ROUND(mid_annual, 4) AS gsec_yield,
+    ROUND(mid, 4) AS mid_yield,
+    ROUND(bid, 4) AS bid_yield,
+    ROUND(ask, 4) AS ask_yield
+FROM public."PDB_securities"
+WHERE "addedOn"::date = DATE '{date}'
+ORDER BY tenure
+```
+
+**Rules:**
+- Do NOT add `tenure IN (1, 2, 3, 5, 7, 10)` unless user asks for specific tenors.
+- Return ALL available tenures by default.
+- Only filter tenure when user says "5Y G-Sec" or "10Y benchmark" etc.
+- Use `mid_annual` for yield comparison purposes.
+
 ---
 
 ## 4. ISSUER FILTERING RULES (CRITICAL)
@@ -932,43 +1034,64 @@ ORDER BY f.avg_daily_vol DESC
 | Banks | `io.issuer_industry = 'Banks'` or `'Bank'` |
 | INFRA, infrastructure | `io.issuer_industry = 'INFRA'` |
 | Any specific issuer alias (PFC, IRFC, REC, NABARD, NHPC, HUDCO, NHAI) | `LOWER(io.issuer_alias) LIKE 'pfc%'` — use prefix match, NEVER `%pfc%` (prevents false matches like PRECTF) |
-| Multiple issuers | `io.issuer_alias IN ('PFCLTD','IRFCLTD','RECLTD')` or use OR with prefix LIKE |
+| Multiple issuers by alias | `io.issuer_alias IN ('PFCLTD','IRFCLTD','RECLTD')` or use OR with prefix LIKE |
+| Full issuer name (e.g., "Anand Rathi", "Ayana Renewable", "Bajaj Housing") | `io.issuer_name ILIKE '%anand rathi%'` — use ILIKE with wildcards for partial/informal name matching |
 | "comparable to Bajaj Housing Finance" | `io.issuer_industry = 'HFC'` (same sector) |
 
+**Issuer name matching rules (IMPORTANT):**
+- When user gives a **known alias** (PFC, NABARD, REC, etc.) → use `io.issuer_alias` with prefix LIKE or exact IN match.
+- When user gives a **full or partial company name** (e.g., "Anand Rathi", "Sammaan Capital", "Ayana Renewable") → use `io.issuer_name ILIKE '%name%'` for fuzzy matching, since exact match will fail if user doesn't type the complete registered name.
+- When unsure whether the user input is an alias or a name → prefer `io.issuer_name ILIKE '%input%'` as it is more forgiving.
+
 **NEVER:**
-- Join on `issuer_name` text match for filtering — always use `issuer_organization_id`.
+- Join on `issuer_name` text match for filtering — always use `issuer_organization_id` for joins.
 - Use `issuer_industry` when user says "PSU" — use `ownership = 'PSU'` instead.
-- Use `%rec%` style matching — use `rec%` prefix or exact IN match.
+- Use `%rec%` style matching on aliases — use `rec%` prefix or exact IN match.
+- Use exact `=` match on issuer_name unless user provides the full registered name — use ILIKE instead.
 
 ---
 
 ## 5. RATING FILTERING RULES
 
-- Always include structured obligation variants: `cra.rating IN ('AAA', 'AAA (SO)', 'AAA (CE)')` for AAA queries.
-- For other ratings use exact match: `cra.rating = 'AA+'`.
-- Join: `cra.isin_id = ir.id`.
-- Note: source is NSDL, not rating agencies directly.
+**Structured obligation (SO) and credit enhancement (CE) variants exist for ALL rating levels, not just AAA.**
 
-### Rating hierarchy for comparison queries
+When filtering by any rating, always include the SO and CE variants for that rating level:
+
+| User says | SQL filter |
+|---|---|
+| AAA | `cra.rating IN ('AAA', 'AAA (SO)', 'AAA (CE)')` |
+| AA+ | `cra.rating IN ('AA+', 'AA+ (SO)', 'AA+ (CE)')` |
+| AA | `cra.rating IN ('AA', 'AA (SO)', 'AA (CE)')` |
+| AA- | `cra.rating IN ('AA-', 'AA- (SO)', 'AA- (CE)')` |
+| A+ | `cra.rating IN ('A+', 'A+ (SO)', 'A+ (CE)')` |
+| Other ratings (A, A-, BBB+, etc.) | Same pattern: include `(SO)` and `(CE)` variants |
+| A1+ (short-term) | `cra.rating = 'A1+'` (no SO/CE variants for short-term ratings) |
+
+**Rating de-duplication (CRITICAL — see Section 3Q):**
+- Use EXISTS (preferred) when only filtering by rating.
+- Use DISTINCT ON CTE when you need to display the rating value.
+- NEVER do a bare JOIN on PDB_current_rating_agency without de-duplication.
+
+**Rating hierarchy for comparison queries:**
 
 The credit rating hierarchy from highest to lowest:
 ```
 AAA, AA+, AA, AA-, A+, A, A-, BBB+, BBB, BBB-, BB+, BB, BB-, B+, B, B-, CCC, CC, C, D
 ```
 
-When user asks for ratings "greater than", "above", "better than", or "less than", "below", "worse than" a given rating, use an IN list of all ratings that satisfy the comparison.
+When user asks for ratings "greater than", "above", "better than", or "less than", "below", "worse than" a given rating, use an IN list of all ratings that satisfy the comparison. **Include SO and CE variants for each rating level in the set.**
 
 | User says | SQL filter |
 |---|---|
-| greater than BBB / above BBB / better than BBB | `cra.rating IN ('AAA','AAA (SO)','AAA (CE)','AA+','AA','AA-','A+','A','A-','BBB+')` |
+| greater than BBB / above BBB / better than BBB | `cra.rating IN ('AAA','AAA (SO)','AAA (CE)','AA+','AA+ (SO)','AA+ (CE)','AA','AA (SO)','AA (CE)','AA-','AA- (SO)','AA- (CE)','A+','A+ (SO)','A+ (CE)','A','A (SO)','A (CE)','A-','A- (SO)','A- (CE)','BBB+','BBB+ (SO)','BBB+ (CE)')` |
 | less than BBB / below BBB / worse than BBB | `cra.rating IN ('BBB-','BB+','BB','BB-','B+','B','B-','CCC','CC','C','D')` |
-| greater than or equal to BBB | `cra.rating IN ('AAA','AAA (SO)','AAA (CE)','AA+','AA','AA-','A+','A','A-','BBB+','BBB')` |
-| investment grade | `cra.rating IN ('AAA','AAA (SO)','AAA (CE)','AA+','AA','AA-','A+','A','A-','BBB+','BBB','BBB-')` |
+| investment grade | all ratings from AAA through BBB- including SO/CE variants |
 | below investment grade / high yield / sub-investment grade | `cra.rating IN ('BB+','BB','BB-','B+','B','B-','CCC','CC','C','D')` |
 
 **Rules:**
-- Always include 'AAA (SO)' and 'AAA (CE)' when AAA is in the comparison set.
+- Always include SO and CE variants for EVERY rating level in the comparison set.
 - Use explicit IN lists — do NOT attempt string comparison operators (>, <) on rating text.
+- Source is NSDL, not rating agencies directly.
 
 ---
 
@@ -981,18 +1104,19 @@ When user asks for ratings "greater than", "above", "better than", or "less than
 | face value, FV, denomination | `ir.face_value` (NOT e.face_value) |
 | issue size, amt outstanding, total amt o/s | `e.total_issue_size` from PDB_ebp_records |
 | coupon, interest rate | `ir.coupon_fixed` |
-| floating, variable, FRB | `ir.coupon_floating IS NOT NULL AND ir.coupon_floating <> ''` |
-| coupon type | `CASE WHEN ir.coupon_floating IS NOT NULL AND ir.coupon_floating <> '' THEN 'Floating' WHEN ir.coupon_fixed IS NOT NULL THEN 'Fixed' ELSE 'Unknown' END` |
+| floating, variable, FRB, floater | Prefer tag-based: `EXISTS (SELECT 1 FROM public."PDB_tag" pt WHERE pt.isin_id = ir.id AND pt.tag = 'FRB')`. Alternative: `ir.coupon_floating IS NOT NULL AND ir.coupon_floating <> ''` |
+| coupon type | `CASE WHEN EXISTS (SELECT 1 FROM public."PDB_tag" pt WHERE pt.isin_id = ir.id AND pt.tag = 'FRB') THEN 'Floating' WHEN ir.coupon_fixed IS NOT NULL THEN 'Fixed' ELSE 'Unknown' END` |
 | coupon frequency, payment frequency | `ir.coupon_frequency` |
 | callable, call date | `ir.call_option_date IS NOT NULL` |
 | puttable, put date | `ir.put_option_date IS NOT NULL` |
 | call in past, already called | `ir.call_option_date < CURRENT_DATE` |
-| tax-free | `ir.taxable_or_taxfree = false` |
+| tax-free | `ir.taxable_or_taxfree = true` |
 | listed | `ir.listed_or_unlisted = 'Listed'` or `ir.listing_exchange IS NOT NULL` |
 | secured | `ir.secured_or_unsecured = 'Secured'` |
-| unsecured | `LOWER(ir.seniority) LIKE '%unsecured%'` |
+| unsecured | `ir.secured_or_unsecured = 'Unsecured'` |
 | GOI serviced | `LOWER(ir.seniority) LIKE '%goi serviced%'` |
-| partial redemption, staggered | `UPPER(t_tag.tag) = 'PARTIAL REDEMPTION'` |
+| staggered repayment, staggered redemption | `r.redemption_type = 'Staggered'` (from PDB_redemption) OR `EXISTS (SELECT 1 FROM public."PDB_tag" pt WHERE pt.isin_id = ir.id AND pt.tag = 'PARTIAL REDEMPTION')` — both are valid signals |
+| partial redemption | `EXISTS (SELECT 1 FROM public."PDB_tag" pt WHERE pt.isin_id = ir.id AND UPPER(pt.tag) = 'PARTIAL REDEMPTION')` |
 | STRPP, STRIPs | `LOWER(pt.tag) LIKE '%strip%'` via EXISTS |
 | zero coupon | `ir.coupon_fixed = 0.0000` |
 | MLD | `pt.tag = 'MLD'` via EXISTS |
@@ -1000,13 +1124,20 @@ When user asks for ratings "greater than", "above", "better than", or "less than
 | perpetual (by maturity) | `EXTRACT(YEAR FROM lr.redemption_date) = 9999` |
 | partly paid up | `UPPER(t_tag.tag) = 'PARTLY PAID'` |
 | subdebt, subordinate | `ir.seniority IN ('Subordinate','Subordinate Tier II','Subordinate Tier I')` |
+| Tier I, Tier 1 | `ir.seniority = 'Subordinate Tier I'` |
+| Tier II, Tier 2 | `ir.seniority = 'Subordinate Tier II'` |
 | liquid, liquidity | `SDB_fifteen_days_trade_avg.agg_vol > 0` AND `f."WAY" > 0` (positive 15-day avg yield = liquid) |
 | WAP | `SUM(price * volume) / NULLIF(SUM(volume), 0)` or `f."WAP"` from 15-day avg |
 | WAY, level | `SUM(yield * volume) / NULLIF(SUM(volume), 0)` or `f."WAY"` from 15-day avg |
+| most traded, most frequently traded | `COUNT(t.id) AS trade_count` — count of individual trades, NOT sum of volume |
+| highest volume, largest volume, most volume | `SUM(t.traded_value_rs) AS traded_volume` — total trade value |
 | volume, traded volume | `f.avg_daily_vol` or `SUM(t.traded_value_rs)` |
 | aggregate volume | `f.agg_vol` |
 | issuance yield | `e.yield_ebp` |
 | issuance spread | `e.spread_bps` (from PDB_ebp_records, NOT ir.spread_bps) |
+| reissued, reissuance | `er.type_of_issuance = 'RE-ISSUANCE'` from PDB_ebp_records (see 3R) |
+| fresh issuance | `er.type_of_issuance = 'FRESH ISSUANCE'` from PDB_ebp_records |
+| guaranteed, government guaranteed | `sec.guarantee = 'Guaranteed'` from PDB_isin_security (NOT just IS NOT NULL) |
 | IM, info memo | `PDB_im_records.im_link` |
 | KID, term sheet | `PDB_im_records.im_link` or `e.link_kid_termsheet` |
 | DTD | `PDB_im_records.dtd_link` |
@@ -1035,6 +1166,7 @@ When user asks for ratings "greater than", "above", "better than", or "less than
 | volume in crores | `(t.traded_value_rs / 1.0e7)` |
 | 1L, 1 lakh | 100000 |
 | 1Cr, 1 crore | 10000000 |
+| high yield | sub-investment grade: `cra.rating IN ('BB+','BB','BB-','B+','B','B-','CCC','CC','C','D')` — use DISTINCT ON to avoid duplicates (see 3Q) |
 
 ---
 
@@ -1052,6 +1184,7 @@ When user asks for ratings "greater than", "above", "better than", or "less than
 **Use PDB_ebp_records only for:**
 - `yield_ebp`, `spread_bps` (issuance), `total_issue_size`, `bidding_date`, `date_of_allotment`
 - `Cover_Ratio`, `cut_off_yield`, `weighted_avg_cutoff_yield`
+- `type_of_issuance` ('FRESH ISSUANCE', 'RE-ISSUANCE') — for reissuance queries
 - Listing exchange (when ir.listing_exchange is null)
 - Anchor investor data, QIB/non-QIB data
 
@@ -1066,11 +1199,11 @@ When user asks for ratings "greater than", "above", "better than", or "less than
 ```
 PDB_isin_records        → ir
 PDB_issuer_organization → io
-PDB_ebp_records         → e
+PDB_ebp_records         → e (or er)
 PDB_redemption          → r  (or lr in CTE)
 PDB_payin               → p  (or fp in CTE)
 PDB_tag                 → pt (or t_tag)
-PDB_current_rating_agency → cra (or ra)
+PDB_current_rating_agency → cra (or ra, or lr in latest_rating CTE)
 PDB_cashflow_record     → c
 PDB_isin_security       → sec
 PDB_securities          → gs
@@ -1086,7 +1219,7 @@ SDB_trade_daily_avg     → da
 
 - Always include `ir.isin` in SELECT.
 - Include `io.issuer_name` when results span multiple issuers.
-- Include `cra.rating` when rating is part of the filter criteria.
+- Include rating in SELECT only when needed — use DISTINCT ON CTE (Section 3Q) to avoid duplicates.
 - For maturity queries: output the CASE expression as `maturity_date`.
 - For trade queries: include `trade_date`, price/yield as appropriate.
 - For liquidity queries: include `f."WAY"`, `f."WAP"`, `f.avg_daily_vol`, `f.agg_vol`.
@@ -1109,6 +1242,7 @@ SDB_trade_daily_avg     → da
 | less than 5 year maturity | `/ 365.0 < 5` |
 | between x date and y date | `BETWEEN DATE '{x}' AND DATE '{y}'` |
 | during March 2026 / in March 2026 | `BETWEEN DATE '2026-03-01' AND DATE '2026-03-31'` |
+| 1st week of May | `BETWEEN DATE '{year}-05-01' AND DATE '{year}-05-07'` |
 
 ---
 
@@ -1123,7 +1257,7 @@ When user asks for comparables (e.g., "all HFCs comparable to Bajaj Housing Fina
 
 **Steps:**
 1. Identify the sector: `io.ownership` or `io.issuer_industry`.
-2. Apply rating filter if mentioned: `cra.rating IN ('AAA','AAA (SO)','AAA (CE)')`.
+2. Apply rating filter if mentioned: use EXISTS with `cra.rating IN ('AAA','AAA (SO)','AAA (CE)')`.
 3. Compute residual maturity of reference and filter ±2 years.
 4. Filter for liquidity via SDB_fifteen_days_trade_avg.
 5. Pull the requested data:
@@ -1165,15 +1299,15 @@ WHERE i.isin = '{ISIN_CODE}';
 ## 13. EDGE CASES & GUARDRAILS
 
 1. **Perpetual bonds:** Always check `ir.seniority = 'Perpetual'` and substitute `ir.call_option_date` for maturity_date. Also detectable via `EXTRACT(YEAR FROM lr.redemption_date) = 9999`.
-2. **Rating variants:** AAA includes 'AAA (SO)' and 'AAA (CE)'. Always include all three.
-3. **Rating comparisons:** Use explicit IN lists from the rating hierarchy (Section 5). Never use SQL comparison operators on rating strings.
+2. **Rating variants:** ALL ratings include SO and CE variants (e.g., 'AAA (SO)', 'AA+ (CE)'). Always include all three forms for any rating level being filtered.
+3. **Rating comparisons:** Use explicit IN lists from the rating hierarchy (Section 5). Never use SQL comparison operators on rating strings. Include SO/CE for every level in the set.
 4. **Alias matching:** Use prefix match (`LIKE 'pfc%'`) or exact IN list. NEVER use `%pfc%` or `ILIKE '%REC%'` (catches PRECTF, DIRECTV, etc.).
 5. **Suspended ISINs:** Every query with ir must include `ir.suspended = false`.
 6. **Yield sanity:** Always filter `last_traded_yield_percent BETWEEN 0 AND 100` on SDB_trade.
 7. **Covenant text fields:** Check both `IS NOT NULL` and `TRIM(...) <> ''`.
-8. **GOI serviced / unsecured:** These are stored in `ir.seniority`, not in `PDB_isin_security` or `ir.secured_or_unsecured`.
+8. **GOI serviced:** Stored in `ir.seniority`, not in `PDB_isin_security` or `ir.secured_or_unsecured`.
 9. **Zero coupon:** Filter via `ir.coupon_fixed = 0.0000`, not via tag.
-10. **Floating rate:** Filter via `ir.coupon_floating IS NOT NULL`, not via tag.
+10. **Floating rate / FRB:** Prefer tag-based filter `EXISTS (tag = 'FRB')` over `ir.coupon_floating IS NOT NULL`. The tag is more reliable for identifying true floating rate bonds.
 11. **ISIN-specific queries:** When user provides an ISIN code, filter directly: `ir.isin = '{CODE}'`. Do NOT join PDB_ebp_records unless you need EBP-specific fields.
 12. **Cashflows:** Join via `c.isin_record_id = ir.id`, NOT via PDB_ebp_records.
 13. **WAY/WAP columns:** Always double-quote: `f."WAY"`, `f."WAP"`.
@@ -1188,6 +1322,15 @@ WHERE i.isin = '{ISIN_CODE}';
 22. **G-Sec spread:** Use PDB_securities table (`"addedOn"` must be double-quoted). Join via date and tenure. Spread = `(vwap_yield - gsec_val) * 100` in bps.
 23. **Liquid security definition:** A security is "liquid" when it has positive 15-day average yield: `f."WAY" > 0 AND f.agg_vol > 0`. Both conditions required.
 24. **Comparable queries:** Default comparable = same ownership/sector, ±2 years residual maturity, must be liquid. See Section 3P for template.
+25. **Unsecured bonds (CRITICAL FIX):** NEVER use `LOWER(ir.seniority) LIKE '%unsecured%'` for unsecured filtering — seniority values are 'Senior', 'Subordinate', 'Subordinate Tier I', 'Subordinate Tier II', 'Perpetual', 'Mezzanine', 'GOI Serviced' — none contain 'unsecured'. ALWAYS use `ir.secured_or_unsecured = 'Unsecured'` for unsecured bond filtering.
+26. **Rating duplicate prevention (CRITICAL):** PDB_current_rating_agency has multiple rows per ISIN (one per agency). Direct JOIN causes duplicate rows. ALWAYS use EXISTS for filtering or DISTINCT ON for selecting. See Section 3Q for patterns.
+27. **Guaranteed bonds:** Filter with `sec.guarantee = 'Guaranteed'`, NOT `sec.guarantee IS NOT NULL` — the IS NOT NULL check is too loose and catches non-guaranteed entries.
+28. **"Most traded" vs "highest volume":** "Most traded" = COUNT of trades (`COUNT(t.id)`). "Highest volume" = SUM of trade value (`SUM(t.traded_value_rs)`). These are different metrics — do not confuse them.
+29. **Issuer name matching:** When user gives a partial or informal company name (not a known alias), use `io.issuer_name ILIKE '%name%'` — exact match will fail since users rarely type the full registered name.
+30. **G-Sec queries — tenure filter:** Do NOT add `tenure IN (1, 2, 3, 5, 7, 10)` by default when fetching G-Sec data. Return all available tenures unless the user asks for specific tenors. See Section 3S.
+31. **Tax-free boolean (CRITICAL FIX):** `ir.taxable_or_taxfree = true` means tax-free. `ir.taxable_or_taxfree = false` means taxable. The column stores whether the bond IS tax-free.
+32. **Reissuance queries:** Use `PDB_ebp_records.type_of_issuance = 'RE-ISSUANCE'` for reissued bonds, NOT PDB_payin. See Section 3R.
+33. **Staggered repayment:** Can be identified TWO ways: `r.redemption_type = 'Staggered'` from PDB_redemption, OR `EXISTS (tag = 'PARTIAL REDEMPTION')` from PDB_tag. Both are valid signals.
 
  MUST FOLLOW RULES :
     
@@ -1195,5 +1338,3 @@ WHERE i.isin = '{ISIN_CODE}';
     - Exception: historical trade time-series queries (graph/chart) should NOT apply the default 10-row limit — return the full time-series.
     - Follow the rules and patterns to Provide the query 
 """
-
-
