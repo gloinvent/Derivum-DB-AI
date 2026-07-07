@@ -1,0 +1,115 @@
+================================================================================
+                    FETCHERIO NL-TO-SQL API DOCUMENTATION
+================================================================================
+
+PROJECT: Convert natural language questions to SQL queries and get results
+STATUS: Ready for integration
+
+
+ENDPOINT
+--------
+POST https://your-production-domain.com/api/query
+
+
+AUTHENTICATION
+--------------
+All requests require an API key sent in the request header:
+
+Header Name:  x-api-key
+Header Value: sk_sodel_key_7july
+
+
+REQUEST FORMAT
+--------------
+Content-Type: application/json
+
+{
+  "question": "your natural language question here"
+}
+
+Example:
+{
+  "question": "show me all bonds issued by ICICI bank in 2024"
+}
+
+
+RESPONSE FORMAT
+---------------
+{
+  "sql": "SELECT * FROM PDB_ebp_records WHERE issuer_name = 'ICICI' AND year = 2024",
+  "llm_time": 0.523,
+  "db_time": 0.156,
+  "rows": [
+    {
+      "ISIN": "INE002A07015",
+      "issuer_name": "ICICI Bank",
+      "issue_size": "50 Cr",
+      "issue_date": "2024-01-15",
+      ...
+    }
+  ],
+  "columns": ["ISIN", "issuer_name", "issue_size", "issue_date", ...],
+  "row_count": 5,
+  "validated": true,
+  "error": null
+}
+
+
+EXAMPLE CURL REQUEST
+--------------------
+curl -X POST https://your-production-domain.com/api/query \
+  -H "x-api-key: sk_sodel_key_7july" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "how many bonds matured last month"
+  }'
+
+
+RESPONSE FIELDS EXPLANATION
+----------------------------
+- sql:        The generated SQL query (for debugging)
+- llm_time:   Time taken to generate SQL (seconds)
+- db_time:    Time taken to execute query (seconds)
+- rows:       Array of result objects
+- columns:    Column names in results
+- row_count:  Number of rows returned
+- validated:  Whether SQL passed read-only validation
+- error:      Error message (null if successful)
+
+
+ERROR RESPONSES
+---------------
+401 Unauthorized:
+  - Missing or invalid API key
+  - Response: {"detail": "Invalid or missing API key"}
+
+400 Bad Request:
+  - Malformed JSON or missing "question" field
+  - Response: {"detail": "..."}
+
+500 Server Error:
+  - LLM error or Database error
+  - Check response.error field for details
+
+
+EXAMPLE QUESTIONS THE API CAN HANDLE
+-------------------------------------
+- "show me top 10 bonds by issue size"
+- "which bonds are maturing in next 3 months"
+- "count how many bonds issued by PSU banks"
+- "get all perpetual bonds with call option before 2030"
+- "show average WAP for ICICI bonds last week"
+
+
+NOTES
+-----
+- All queries are READ-ONLY (no data modification allowed)
+- Maximum response time: ~2 seconds (LLM + DB)
+- Contact support if you have questions about API usage
+
+
+SUPPORT CONTACT
+---------------
+For issues or questions, reach out to: siddharthpatil0206@gmail.com
+
+================================================================================

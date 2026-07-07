@@ -14,6 +14,7 @@ class Settings:
     db_password: str = os.getenv("PASSWORD", "")
     v1_api_key: str = os.getenv("V1_API_KEY", "")
     v1_plan_tier: str = os.getenv("V1_PLAN_TIER", "pro")
+    api_key: str = os.getenv("API_KEY", "")
 
 
 settings = Settings()

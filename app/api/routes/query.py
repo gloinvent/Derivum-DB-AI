@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from app.config import settings
 from app.logger import get_logger
 from app.services.nl_to_sql import nl_to_sql
 from app.services.query_executor import execute_query
@@ -15,7 +16,11 @@ class QueryRequest(BaseModel):
 
 
 @router.post("/query", include_in_schema=False)
-async def run_query(req: QueryRequest):
+async def run_query(req: QueryRequest, x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != settings.api_key:
+        log.warning("query | unauthorized | api_key=%r", x_api_key)
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
     log.info("query | question=%r", req.question)
 
     result: dict = {
