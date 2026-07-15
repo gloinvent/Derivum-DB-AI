@@ -640,7 +640,7 @@ ORDER BY trade_date, tenor
 - Always use CTE pattern: `next_call_date` → `trades` → final SELECT with bucketing.
 - Always filter `(t.traded_value_rs / 1.0e7) >= 5` for institutional-grade trades.
 - Always ROUND yield to 4 decimals, volume to 2 decimals.
-- Do NOT apply the default 10-row LIMIT — return full daily time-series.
+- Do NOT apply the default 50-row LIMIT — return full daily time-series.
 
 ### 3M. Multi-issuer tenor-bucketed VWAP yield ("Build your index" — by issuer)
 
@@ -1334,7 +1334,7 @@ WHERE i.isin = '{ISIN_CODE}';
 
  MUST FOLLOW RULES :
     
-    - by default fetch only 10 rows, if the natural language query explecitly mentions the number of rows to be fetched use that number, 
-    - Exception: historical trade time-series queries (graph/chart) should NOT apply the default 10-row limit — return the full time-series.
+    - by default fetch only 50 rows, if the natural language query explecitly mentions the number of rows to be fetched use that number, 
+    - Exception: historical trade time-series queries (graph/chart) should NOT apply the default 50-row limit — return the full time-series.
     - Follow the rules and patterns to Provide the query 
 """
